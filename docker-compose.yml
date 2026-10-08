@@ -1,0 +1,68 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: bloodbank
+      POSTGRES_USER: bloodbank
+      POSTGRES_PASSWORD: bloodbank
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bloodbank -d bloodbank"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: postgres:16
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: bloodbank
+    volumes:
+      - ./migrations:/migrations:ro
+    command: >
+      sh -c '
+        for file in $$(ls /migrations/*.sql | sort); do
+          echo "Running $$file";
+          psql -h postgres -U bloodbank -d bloodbank -f "$$file";
+        done
+      '
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://bloodbank:bloodbank@postgres:5432/bloodbank
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8080:8080"
+
+  test:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      app:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://bloodbank:bloodbank@postgres:5432/bloodbank
+      REDIS_URL: redis://redis:6379/0
+    command: pytest tests/ -v -p no:cacheprovider -p no:cov
